@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+    <title>Minecraft Ultra: Inventory & Better UI</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; touch-action: none; user-select: none; font-family: 'Courier New', Courier, monospace; }
+        canvas { display: block; width: 100%; height: 100%; }
+        
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+        
+        /* HUD ELEMENTS */
+        #crosshair {
+            position: absolute; top: 50%; left: 50%; width: 18px; height: 18px;
+            border: 2px solid rgba(255,255,255,0.8); border-radius: 50%;
+            transform: translate(-50%, -50%); z-index: 10; mix-blend-mode: difference;
+        }
+
+        #stats-bar {
+            position: absolute; bottom: 80px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 40px; width: 300px; justify-content: center;
+        }
+        .stat-row { display: flex; gap: 4px; }
+        .heart, .food { font-size: 24px; text-shadow: 2px 2px 0 #000; }
+        .heart { color: #ff3333; }
+        .food { color: #d68c29; }
+
+        #hotbar {
+            position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 6px; background: rgba(0,0,0,0.6);
+            padding: 6px; border: 2px solid #555; border-radius: 4px; pointer-events: auto;
+        }
+        .slot {
+            width: 48px; height: 48px; background: #222; border: 2px solid #333;
+            position: relative; display: flex; justify-content: center; align-items: center; cursor: pointer;
+        }
+        .slot.active { border-color: white; background: #444; box-shadow: 0 0 10px rgba(255,255,255,0.3); }
+        .slot img { width: 32px; height: 32px; image-rendering: pixelated; }
+        .count { position: absolute; bottom: 2px; right: 2px; color: white; font-weight: bold; font-size: 14px; text-shadow: 1px 1px 0 #000; }
+
+        /* MENUS (CRAFTING & INVENTORY) */
+        #craft-btn { position: absolute; top: 20px; right: 20px; pointer-events: auto; background: orange; border: 2px solid white; padding: 10px; font-weight: bold; border-radius: 8px; cursor: pointer;}
+        #inv-btn { position: absolute; top: 20px; right: 130px; pointer-events: auto; background: #555; color: white; border: 2px solid white; padding: 10px; font-weight: bold; border-radius: 8px; cursor: pointer;}
+        
+        .menu-modal {
+            display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: rgba(20,20,20,0.95); padding: 20px; border: 2px solid #888; border-radius: 8px;
+            pointer-events: auto; min-width: 320px; color: white; z-index: 100; max-height: 80vh; overflow-y: auto;
+        }
+        .recipe { display: flex; align-items: center; justify-content: space-between; padding: 10px; border-bottom: 1px solid #444; cursor: pointer; }
+        .recipe:hover { background: #333; }
+        
+        #inv-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 15px; margin-bottom: 15px; justify-content: center; }
+
+        #overlay {
+            position: absolute; top:0; left:0; width:100%; height:100%; background: black;
+            display: flex; flex-direction: column; justify-content: center; align-items: center; 
+            color: white; z-index: 200; transition: opacity 1s;
+        }
+        
+        /* TOUCH CONTROLS */
+        .touch-btn {
+            position: absolute; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 12px; pointer-events: auto; backdrop-filter: blur(4px);
+        }
+        .touch-btn:active { background: rgba(255,255,255,0.4); }
+        #dpad { bottom: 120px; left: 20px; width: 120px; height: 120px; } /* Tighter container */
+        #actions { bottom: 120px; right: 20px; display: flex; gap: 15px; }
+        .t-btn { width: 60px; height: 60px; border-radius: 50%; font-size: 12px; color: white; font-weight: bold; display: flex; justify-content: center; align-items: center; pointer-events: auto;}
+        
+    </style>
+</head>
+<body>
+    <div id="overlay">
+        <h1>MINECRAFT ULTRA</h1>
+        <p>Loading World...</p>
+    </div>
+
+    <div id="ui-layer">
+        <div id="stats-bar">
+            <div class="stat-row" id="hearts">❤❤❤❤❤</div>
+            <div class="stat-row" id="hunger">🍖🍖🍖🍖🍖</div>
+        </div>
+        <div id="crosshair"></div>
+        <div id="hotbar"></div>
+        
+        <button id="inv-btn">INV [E]</button>
+        <button id="craft-btn">CRAFT [C]</button>
+        
+        <div id="craft-menu" class="menu-modal">
+            <h2 style="margin-top:0; color:orange; text-align:center;">CRAFTING</h2>
+            <div id="recipe-list"></div>
+            <button onclick="document.getElementById('craft-menu').style.display='none'" style="width:100%; margin-top:10px; padding:10px;">CLOSE</button>
+        </div>
+
+        <div id="inv-menu" class="menu-modal">
+            <h2 style="margin-top:0; color:white; text-align:center;">INVENTORY</h2>
+            <p style="font-size:12px; color:#aaa; text-align:center;">Click an item to equip it to your current hotbar slot.</p>
+            <div id="inv-grid"></div>
+            <button onclick="document.getElementById('inv-menu').style.display='none'" style="width:100%; padding:10px;">CLOSE</button>
+        </div>
+
+        <div id="dpad" style="display:none;"></div>
+        <div id="actions" style="display:none;">
+            <div class="t-btn" id="btn-jump" style="background:rgba(100,100,255,0.4)">JUMP</div>
+            <div class="t-btn" id="btn-act" style="background:rgba(200,50,50,0.4)">HIT</div>
+            <div class="t-btn" id="btn-plc" style="background:rgba(50,200,50,0.4)">PUT</div>
+        </div>
+    </div>
+    
+    <div id="canvas-container"></div>
+
+    <script type="module">
+        import * as THREE from 'https://unpkg.com/three@0.150.0/build/three.module.js';
+
+        // Block default context menu (right click)
+        document.addEventListener('contextmenu', event => event.preventDefault());
+
+        // --- 1. CONFIG & STATE ---
+        const config = { chunkSize: 64, gravity: 28.0, speed: 5.0, runSpeed: 8.0, jump: 10.0, reach: 6 };
+        const state = {
+            hp: 10, maxHp: 10, hunger: 10, maxHunger: 10,
+            inventory: { 100: 1 }, // Start with a wood pickaxe
+            hotbar: [100, 2, 3, 5, 0, 0, 0], selectedSlot: 0, dayTime: 0,
+            tools: { 'wood_pick': { dmg: 2 }, 'stone_pick': { dmg: 3 }, 'iron_pick': { dmg: 4 }, 'diamond_pick': { dmg: 6 } }
+        };
+
+        // --- 2. ASSET GENERATION ---
+        function genTex(h, s, l, type='noise') {
+            const sz=64, cvs=document.createElement('canvas'), ctx=cvs.getContext('2d');
+            cvs.width=sz; cvs.height=sz;
+            ctx.fillStyle=`hsl(${h},${s}%,${l}%)`; ctx.fillRect(0,0,sz,sz);
+            for(let i=0; i<600; i++) {
+                ctx.fillStyle = `hsl(${h},${s}%,${l + (Math.random()-0.5)*15}%)`;
+                if(type==='wood') ctx.fillRect(Math.random()*sz, 0, 2, sz);
+                else ctx.fillRect(Math.random()*sz, Math.random()*sz, 2, 2);
+            }
+            if(type==='ore') {
+                ctx.fillStyle = '#000'; ctx.globalAlpha = 0.2;
+                for(let i=0; i<5; i++) ctx.fillRect(Math.random()*50, Math.random()*50, 8, 8);
+                ctx.globalAlpha = 1.0;
+            }
+            const tex = new THREE.CanvasTexture(cvs); tex.magFilter = THREE.NearestFilter; tex.colorSpace = THREE.SRGBColorSpace;
+            return { tex, cvs };
+        }
+
+        const TEX = {
+            grass: genTex(100,60,40), dirt: genTex(30,50,30), stone: genTex(0,0,50), wood: genTex(30,60,25,'wood'), leaves: genTex(110,60,35), 
+            sand: genTex(48,70,70), water: genTex(210,80,50), coal: genTex(0,0,15,'ore'), iron: genTex(20,20,60,'ore'), diamond: genTex(180,70,70,'ore'),
+            pig: genTex(340,70,80), zombie: genTex(100,40,40), plank: genTex(35,60,50,'wood'), flesh: genTex(0,60,40)
+        };
+
+        const BLOCKS = [
+            { id:0, name:'Air', visible:false }, { id:1, name:'Grass', mat: new THREE.MeshLambertMaterial({map:TEX.grass.tex}), drop:2 },
+            { id:2, name:'Dirt', mat: new THREE.MeshLambertMaterial({map:TEX.dirt.tex}), drop:2 }, { id:3, name:'Stone', mat: new THREE.MeshLambertMaterial({map:TEX.stone.tex}), drop:10 },
+            { id:4, name:'Wood', mat: new THREE.MeshLambertMaterial({map:TEX.wood.tex}), drop:4 }, { id:5, name:'Leaves', mat: new THREE.MeshLambertMaterial({map:TEX.leaves.tex, transparent:true, opacity:0.9}), drop:100 },
+            { id:6, name:'Sand', mat: new THREE.MeshLambertMaterial({map:TEX.sand.tex}), drop:6 }, { id:7, name:'Water', mat: new THREE.MeshLambertMaterial({map:TEX.water.tex, transparent:true, opacity:0.6}), collide:false },
+            { id:8, name:'Coal Ore', mat: new THREE.MeshLambertMaterial({map:TEX.coal.tex}), drop:20 }, { id:9, name:'Iron Ore', mat: new THREE.MeshLambertMaterial({map:TEX.iron.tex}), drop:21 },
+            { id:10,name:'Diamond Ore', mat: new THREE.MeshLambertMaterial({map:TEX.diamond.tex}), drop:22 }, { id:11,name:'Planks', mat: new THREE.MeshLambertMaterial({map:TEX.plank.tex}), drop:11 },
+            { id:99,name:'Bedrock', mat: new THREE.MeshLambertMaterial({color:0x000000}), breakable:false }
+        ];
+
+        const ITEMS = {
+            20: { name: 'Coal', img: TEX.coal.cvs }, 21: { name: 'Iron Ingot', img: TEX.iron.cvs }, 22: { name: 'Diamond', img: TEX.diamond.cvs },
+            50: { name: 'Porkchop', img: TEX.pig.cvs, food: 3 }, 51: { name: 'Rotten Flesh', img: TEX.flesh.cvs, food: 1 },
+            100:{ name: 'Wood Pick', dmg: 2 }, 101:{ name: 'Stone Pick', dmg: 3 }, 102:{ name: 'Iron Pick', dmg: 4 }, 103:{ name: 'Diamond Pick', dmg: 6 }
+        };
+
+        // --- 3. THREE.JS ENGINE ---
+        const scene = new THREE.Scene(); scene.background = new THREE.Color(0x87CEEB); scene.fog = new THREE.Fog(0x87CEEB, 20, 70);
+        const camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.1, 100); camera.rotation.order = "YXZ";
+        const player = { pos: new THREE.Vector3(0,40,0), vel: new THREE.Vector3(), onGround: false }; camera.position.copy(player.pos);
+        const renderer = new THREE.WebGLRenderer({ antialias: false }); renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.3); scene.add(ambientLight);
+        const sunLight = new THREE.DirectionalLight(0xffffff, 0.8); sunLight.position.set(50, 100, 50); sunLight.castShadow = true;
+        sunLight.shadow.mapSize.width = 2048; sunLight.shadow.mapSize.height = 2048; sunLight.shadow.camera.near = 0.5; sunLight.shadow.camera.far = 150;
+        sunLight.shadow.camera.left = -60; sunLight.shadow.camera.right = 60; sunLight.shadow.camera.top = 60; sunLight.shadow.camera.bottom = -60;
+        scene.add(sunLight);
+
+        // --- 4. WORLD SYSTEM ---
+        const world = new Map(), instancedMeshes = {}, dummy = new THREE.Object3D(), geo = new THREE.BoxGeometry(1,1,1);
+        function initInstancing() {
+            BLOCKS.forEach(b => {
+                if(b.id === 0) return;
+                const mesh = new THREE.InstancedMesh(geo, b.mat, 8000); mesh.castShadow = true; mesh.receiveShadow = true;
+                mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); scene.add(mesh); instancedMeshes[b.id] = { mesh, count: 0 };
+            });
+        }
+        initInstancing();
+
+        function setBlock(x, y, z, id) {
+            const k = `${x},${y},${z}`;
+            if(id === 0) { world.delete(k); return; }
+            world.set(k, { id });
+        }
+
+        function rebuildMesh() {
+            Object.values(instancedMeshes).forEach(im => im.count = 0);
+            for(const [key, val] of world) {
+                const [x,y,z] = key.split(',').map(Number);
+                if(Math.abs(x-player.pos.x) > 60 || Math.abs(z-player.pos.z) > 60) continue;
+                const im = instancedMeshes[val.id];
+                if(im && im.count < 8000) { dummy.position.set(x,y,z); dummy.updateMatrix(); im.mesh.setMatrixAt(im.count++, dummy.matrix); }
+            }
+            Object.values(instancedMeshes).forEach(im => im.mesh.instanceMatrix.needsUpdate = true);
+        }
+
+        // --- 5. PARTICLES & MOBS ---
+        const particles = [], partGeo = new THREE.BoxGeometry(0.2, 0.2, 0.2), partMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        function spawnParticles(pos, color, count=5) {
+            for(let i=0; i<count; i++) {
+                const m = new THREE.Mesh(partGeo, partMat.clone()); m.material.color.set(color);
+                m.position.copy(pos).add(new THREE.Vector3((Math.random()-.5),(Math.random()-.5),(Math.random()-.5)));
+                m.vel = new THREE.Vector3((Math.random()-.5)*5, Math.random()*5, (Math.random()-.5)*5); m.life = 1.0;
+                scene.add(m); particles.push(m);
+            }
+        }
+
+        const mobs = [];
+        class Mob {
+            constructor(x, y, z, type) {
+                this.type = type; this.hp = type==='pig'?5:10; this.mesh = new THREE.Group(); this.mesh.position.set(x,y,z);
+                const mat = new THREE.MeshLambertMaterial({map: type==='pig'?TEX.pig.tex : TEX.zombie.tex});
+                const body = new THREE.Mesh(new THREE.BoxGeometry(0.5, type==='pig'?0.4:0.8, 0.5), mat);
+                body.position.y = type==='pig'?0.2:0.4; body.castShadow=true; this.mesh.add(body);
+                this.vel = new THREE.Vector3(); scene.add(this.mesh);
+            }
+            update(dt) {
+                this.vel.y -= config.gravity * dt; const pos = this.mesh.position, next = pos.clone().add(this.vel.clone().multiplyScalar(dt));
+                const fy = Math.round(next.y); if(world.has(`${Math.round(next.x)},${fy},${Math.round(next.z)}`)) { if(this.vel.y < 0) { next.y = fy + 1; this.vel.y = 0; } }
+                pos.copy(next);
+                if(this.type === 'zombie') {
+                   const d = pos.distanceTo(player.pos);
+                   if(d < 15 && d > 1) { const dir = new THREE.Vector3().subVectors(player.pos, pos).normalize(); pos.x += dir.x * 2 * dt; pos.z += dir.z * 2 * dt; this.mesh.lookAt(player.pos.x, pos.y, player.pos.z); if(d < 1.5 && Math.random() < 0.05) takeDamage(1); }
+                }
+            }
+            hit(dmg) {
+                this.hp -= dmg; spawnParticles(this.mesh.position, 0xff0000); this.vel.y = 5;
+                if(this.hp <= 0) { scene.remove(this.mesh); mobs.splice(mobs.indexOf(this), 1); addToInv(this.type==='pig'?50:51, 1); }
+            }
+        }
+
+        // --- 6. WORLD GEN ---
+        function noise(x,z) { return Math.sin(x/15)*Math.cos(z/15)*4 + Math.sin(x/40)*Math.sin(z/40)*8; }
+        function genWorld() {
+            const R = config.chunkSize;
+            for(let x=-R; x<=R; x++) {
+                for(let z=-R; z<=R; z++) {
+                    const h = Math.floor(noise(x,z)); setBlock(x, h, z, h< -2 ? 6 : (h < 2 ? 1 : (h>12 ? 3 : 1)));
+                    if(h < -1) setBlock(x, -1, z, 7);
+                    for(let y=h-1; y>-15; y--) { let id = 3; if(Math.random()<0.04) id = 8; if(y < -5 && Math.random()<0.02) id = 9; if(y < -10 && Math.random()<0.01) id = 10; setBlock(x,y,z, id); }
+                    setBlock(x, -15, z, 99);
+                    if(h > -1 && Math.random() < 0.015) { for(let i=1; i<5; i++) setBlock(x, h+i, z, 4); for(let lx=-2;lx<=2;lx++) for(let lz=-2;lz<=2;lz++) setBlock(x+lx, h+4, z+lz, 5); }
+                    if(h > 0 && Math.random() < 0.005) mobs.push(new Mob(x, h+2, z, Math.random()>.5?'pig':'zombie'));
+                }
+            }
+            rebuildMesh(); document.getElementById('overlay').style.opacity = 0; setTimeout(()=>document.getElementById('overlay').style.display='none', 1000);
+        }
+
+        // --- 7. PLAYER ACTIONS & UI ---
+        function addToInv(id, count) { state.inventory[id] = (state.inventory[id]||0) + count; updateUI(); }
+        function eat(id) { if(state.hunger < state.maxHunger) { state.hunger = Math.min(state.hunger + ITEMS[id].food, state.maxHunger); state.inventory[id]--; updateUI(); } }
+
+        function handleInteract(mode) {
+            const rc = new THREE.Raycaster(); rc.setFromCamera(new THREE.Vector2(0,0), camera);
+            const mobHits = rc.intersectObjects(mobs.map(m=>m.mesh));
+            if(mobHits.length > 0 && mobHits[0].distance < config.reach) {
+                if(mode==='hit') { const m = mobs.find(x => x.mesh === mobHits[0].object.parent); const held = state.hotbar[state.selectedSlot]; m.hit(ITEMS[held]?.dmg || 1); } return;
+            }
+            const blockHits = rc.intersectObjects(Object.values(instancedMeshes).map(x=>x.mesh));
+            if(blockHits.length > 0 && blockHits[0].distance < config.reach) {
+                const hit = blockHits[0], p = hit.point.clone().sub(hit.face.normal.clone().multiplyScalar(0.1));
+                const bx=Math.round(p.x), by=Math.round(p.y), bz=Math.round(p.z);
+                if(mode === 'hit') {
+                    const b = world.get(`${bx},${by},${bz}`);
+                    if(b && BLOCKS[b.id].name !== 'Bedrock') { setBlock(bx,by,bz,0); rebuildMesh(); spawnParticles(new THREE.Vector3(bx,by,bz), 0x555555); if(BLOCKS[b.id].drop) addToInv(BLOCKS[b.id].drop, 1); }
+                } else {
+                    const held = state.hotbar[state.selectedSlot];
+                    if(!held || ITEMS[held]) { if(mode==='place' && ITEMS[held] && ITEMS[held].food) eat(held); return; }
+                    const px=bx+hit.face.normal.x, py=by+hit.face.normal.y, pz=bz+hit.face.normal.z;
+                    if(Math.abs(player.pos.x-px) < 0.6 && Math.abs(player.pos.z-pz) < 0.6 && py >= player.pos.y-1 && py <= player.pos.y+1) return;
+                    if(state.inventory[held] > 0) { setBlock(px,py,pz, held); state.inventory[held]--; rebuildMesh(); updateUI(); }
+                }
+            }
+        }
+
+        function takeDamage(amt) {
+            state.hp -= amt; updateUI(); document.getElementById('ui-layer').style.backgroundColor = 'rgba(255,0,0,0.3)'; setTimeout(()=>document.getElementById('ui-layer').style.backgroundColor='transparent', 100);
+            if(state.hp <= 0) { alert("YOU DIED. Respawning..."); player.pos.set(0,40,0); state.hp=10; state.hunger=10; updateUI(); }
+        }
+
+        function updateUI() {
+            document.getElementById('hearts').innerText = '❤'.repeat(Math.ceil(state.hp)); document.getElementById('hunger').innerText = '🍖'.repeat(Math.ceil(state.hunger));
+            const hb = document.getElementById('hotbar'); hb.innerHTML = '';
+            state.hotbar.forEach((id, idx) => {
+                const div = document.createElement('div'); div.className = 'slot' + (idx===state.selectedSlot?' active':'');
+                if(id !== 0) {
+                    let src = ITEMS[id] ? ITEMS[id].img.toDataURL() : (BLOCKS.find(x=>x.id===id)?.mat.map.image.toDataURL() || '');
+                    const count = state.inventory[id] || 0; div.innerHTML = `<img src="${src}"><span class="count">${count===0?'∞':count}</span>`;
+                    if(count === 0 && !ITEMS[id] && id < 100) div.style.opacity = '0.3';
+                }
+                div.onclick = () => { state.selectedSlot = idx; updateUI(); }; hb.appendChild(div);
+            });
+            renderInventory(); // Keep inventory synced if it's open
+        }
+
+        // CRAFTING LOGIC
+        const RECIPES = [ { out: 11, count: 4, cost: {4:1} }, { out: 100, count: 1, cost: {11:2} }, { out: 101, count: 1, cost: {11:2, 3:3} }, { out: 102, count: 1, cost: {11:2, 21:3} }, { out: 103, count: 1, cost: {11:2, 22:3} } ];
+        function renderCrafting() {
+            const list = document.getElementById('recipe-list'); list.innerHTML = '';
+            RECIPES.forEach(r => {
+                const row = document.createElement('div'); row.className = 'recipe';
+                const outName = ITEMS[r.out] ? ITEMS[r.out].name : BLOCKS.find(b=>b.id===r.out).name;
+                let costStr = ''; for(let cid in r.cost) costStr += `${ITEMS[cid] ? ITEMS[cid].name : BLOCKS.find(b=>b.id==cid).name} x${r.cost[cid]} `;
+                row.innerHTML = `<span>${outName} (x${r.count})</span><span style="font-size:12px; color:#aaa">${costStr}</span>`;
+                row.onclick = () => {
+                    let canCraft = true; for(let cid in r.cost) if((state.inventory[cid]||0) < r.cost[cid]) canCraft=false;
+                    if(canCraft) { for(let cid in r.cost) state.inventory[cid] -= r.cost[cid]; addToInv(r.out, r.count); if(!state.hotbar.includes(r.out)) { const empty = state.hotbar.indexOf(0); if(empty !== -1) state.hotbar[empty] = r.out; } updateUI(); } else alert("Not enough resources!");
+                }; list.appendChild(row);
+            });
+        }
+
+        // INVENTORY LOGIC
+        function renderInventory() {
+            const grid = document.getElementById('inv-grid'); grid.innerHTML = '';
+            for(let idStr in state.inventory) {
+                let id = parseInt(idStr);
+                if(state.inventory[id] > 0 || ITEMS[id]) {
+                    const div = document.createElement('div'); div.className = 'slot';
+                    let src = ITEMS[id] ? ITEMS[id].img.toDataURL() : (BLOCKS.find(x=>x.id===id)?.mat.map.image.toDataURL() || '');
+                    div.innerHTML = `<img src="${src}"><span class="count">${state.inventory[id] || 0}</span>`;
+                    div.onclick = () => {
+                        state.hotbar[state.selectedSlot] = id;
+                        updateUI();
+                    };
+                    grid.appendChild(div);
+                }
+            }
+        }
+
+        function toggleMenu(menuId) {
+            const m = document.getElementById(menuId);
+            if(m.style.display === 'block') { m.style.display = 'none'; } 
+            else { 
+                document.getElementById('craft-menu').style.display = 'none'; // close other
+                document.getElementById('inv-menu').style.display = 'none';
+                m.style.display = 'block'; 
+                if(menuId === 'craft-menu') renderCrafting();
+                if(menuId === 'inv-menu') renderInventory();
+                document.exitPointerLock(); // Free mouse to click UI
+            }
+        }
+
+        document.getElementById('craft-btn').onclick = () => toggleMenu('craft-menu');
+        document.getElementById('inv-btn').onclick = () => toggleMenu('inv-menu');
+
+        // --- 8. INPUT & CAMERA SYSTEM ---
+        const keys = { w: false, a: false, s: false, d: false, space: false, shift: false };
+        const PI_2 = Math.PI / 2;
+
+        window.addEventListener('keydown', (e) => {
+            if(e.code === 'KeyW') keys.w = true; if(e.code === 'KeyS') keys.s = true; if(e.code === 'KeyA') keys.a = true; if(e.code === 'KeyD') keys.d = true; 
+            if(e.code === 'Space') keys.space = true; if(e.code === 'ShiftLeft' || e.code === 'ShiftRight') keys.shift = true;
+            
+            // UI Hotkeys
+            if(e.code === 'KeyC') toggleMenu('craft-menu');
+            if(e.code === 'KeyE') toggleMenu('inv-menu');
+            
+            // Hotbar selection (1-7)
+            if(e.key >= '1' && e.key <= '7') { state.selectedSlot = parseInt(e.key) - 1; updateUI(); }
+        });
+        window.addEventListener('keyup', (e) => {
+            if(e.code === 'KeyW') keys.w = false; if(e.code === 'KeyS') keys.s = false; if(e.code === 'KeyA') keys.a = false; if(e.code === 'KeyD') keys.d = false; 
+            if(e.code === 'Space') keys.space = false; if(e.code === 'ShiftLeft' || e.code === 'ShiftRight') keys.shift = false;
+        });
+        
+        // Smart Pointer Lock
+        renderer.domElement.addEventListener('mousedown', (e) => {
+            if('ontouchstart' in window) return; // Ignore on mobile
+            if(document.pointerLockElement !== document.body) {
+                document.body.requestPointerLock();
+                document.getElementById('craft-menu').style.display = 'none';
+                document.getElementById('inv-menu').style.display = 'none';
+            } else {
+                handleInteract(e.button === 0 ? 'hit' : 'place');
+            }
+        });
+        
+        document.addEventListener('mousemove', (e) => {
+            if(document.pointerLockElement === document.body) {
+                camera.rotation.y -= e.movementX * 0.002;
+                camera.rotation.x -= e.movementY * 0.002;
+                camera.rotation.x = Math.max(-PI_2, Math.min(PI_2, camera.rotation.x));
+            }
+        });
+
+        // Mobile Split-Screen Controls
+        if('ontouchstart' in window) {
+            document.getElementById('dpad').style.display = 'block';
+            document.getElementById('actions').style.display = 'flex';
+            
+            let lookTouchId = null;
+            let lastTouchX = 0, lastTouchY = 0;
+
+            renderer.domElement.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                for(let i=0; i<e.changedTouches.length; i++) {
+                    const t = e.changedTouches[i];
+                    if(t.pageX > window.innerWidth / 2) { // Look is right half only
+                        lookTouchId = t.identifier; lastTouchX = t.pageX; lastTouchY = t.pageY;
+                    }
+                }
+            }, {passive: false});
+
+            renderer.domElement.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                for(let i=0; i<e.changedTouches.length; i++) {
+                    const t = e.changedTouches[i];
+                    if(t.identifier === lookTouchId) {
+                        camera.rotation.y -= (t.pageX - lastTouchX) * 0.005;
+                        camera.rotation.x -= (t.pageY - lastTouchY) * 0.005;
+                        camera.rotation.x = Math.max(-PI_2, Math.min(PI_2, camera.rotation.x));
+                        lastTouchX = t.pageX; lastTouchY = t.pageY;
+                    }
+                }
+            }, {passive: false});
+
+            renderer.domElement.addEventListener('touchend', (e) => {
+                for(let i=0; i<e.changedTouches.length; i++) { if(e.changedTouches[i].identifier === lookTouchId) lookTouchId = null; }
+            });
+
+            // Tighter Virtual D-Pad
+            const addBtn = (id, txt, keyBind) => {
+                const b = document.createElement('div'); b.className = 'touch-btn'; b.innerText = txt;
+                b.style.width='40px'; b.style.height='40px'; b.style.display='flex'; b.style.justifyContent='center'; b.style.alignItems='center'; b.style.fontWeight='bold';
+                b.ontouchstart = (e)=>{e.preventDefault(); keys[keyBind]=true; b.style.background='rgba(255,255,255,0.4)'};
+                b.ontouchend = b.ontouchleave = (e)=>{e.preventDefault(); keys[keyBind]=false; b.style.background='rgba(255,255,255,0.15)'};
+                return b;
+            };
+            const dpad = document.getElementById('dpad');
+            const u=addBtn('','▲','w'); u.style.top='0'; u.style.left='40px'; dpad.appendChild(u);
+            const d=addBtn('','▼','s'); d.style.bottom='0'; d.style.left='40px'; dpad.appendChild(d);
+            const l=addBtn('','◀','a'); l.style.top='40px'; l.style.left='0'; dpad.appendChild(l);
+            const r=addBtn('','▶','d'); r.style.top='40px'; r.style.right='0'; dpad.appendChild(r);
+            
+            // Action Buttons
+            document.getElementById('btn-jump').ontouchstart = (e)=>{e.preventDefault(); keys.space=true;};
+            document.getElementById('btn-jump').ontouchend = (e)=>{e.preventDefault(); keys.space=false;};
+            document.getElementById('btn-act').ontouchstart = (e)=>{e.preventDefault(); handleInteract('hit')};
+            document.getElementById('btn-plc').ontouchstart = (e)=>{e.preventDefault(); handleInteract('place')};
+        }
+
+        // --- 9. GAME LOOP ---
+        const clock = new THREE.Clock(); let regenTimer = 0;
+        function animate() {
+            requestAnimationFrame(animate);
+            const dt = Math.min(clock.getDelta(), 0.1);
+
+            // Day/Night Cycle
+            state.dayTime += dt * 0.02; 
+            sunLight.position.set(Math.cos(state.dayTime)*100, Math.sin(state.dayTime)*100, 50);
+            const intensity = Math.max(0, Math.sin(state.dayTime)); sunLight.intensity = intensity; ambientLight.intensity = 0.1 + intensity * 0.4;
+            const skyColor = new THREE.Color(0x87CEEB).lerp(new THREE.Color(0x050510), 1 - intensity); scene.background = skyColor; scene.fog.color = skyColor;
+
+            // Physics & Movement
+            player.vel.y -= config.gravity * dt;
+            
+            const fwd = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion); fwd.y=0; fwd.normalize();
+            const rgt = new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion); rgt.y=0; rgt.normalize();
+            const moveDir = new THREE.Vector3();
+            if(keys.w) moveDir.add(fwd); if(keys.s) moveDir.sub(fwd);
+            if(keys.d) moveDir.add(rgt); if(keys.a) moveDir.sub(rgt);
+            
+            const currentSpeed = keys.shift ? config.runSpeed : config.speed;
+            if(moveDir.lengthSq() > 0) moveDir.normalize().multiplyScalar(currentSpeed * dt);
+            
+            const next = player.pos.clone().add(moveDir);
+
+            const check = (p) => { const bx=Math.round(p.x), by=Math.round(p.y), bz=Math.round(p.z); return world.has(`${bx},${by},${bz}`) || world.has(`${bx},${by+1},${bz}`); };
+            
+            if(!check(new THREE.Vector3(next.x, player.pos.y-1, player.pos.z))) player.pos.x = next.x;
+            if(!check(new THREE.Vector3(player.pos.x, player.pos.y-1, next.z))) player.pos.z = next.z;
+            
+            player.pos.y += player.vel.y * dt;
+            const floorY = Math.round(player.pos.y - 1.5);
+            if(world.has(`${Math.round(player.pos.x)},${floorY},${Math.round(player.pos.z)}`)) {
+                if(player.vel.y < 0) { player.pos.y = floorY + 1.5; player.vel.y = 0; player.onGround = true; }
+            } else player.onGround = false;
+
+            if(keys.space && player.onGround) { player.vel.y = config.jump; player.onGround=false; }
+            if(player.pos.y < -30) takeDamage(10);
+            
+            const bobbing = (player.onGround && moveDir.lengthSq() > 0) ? Math.sin(Date.now() / (keys.shift ? 150 : 200)) * 0.05 : 0;
+            camera.position.copy(player.pos).add(new THREE.Vector3(0, bobbing, 0));
+
+            // Logic Updates
+            if(state.hunger >= 9 && state.hp < state.maxHp) { regenTimer += dt; if(regenTimer > 3) { state.hp++; regenTimer=0; updateUI(); } }
+            mobs.forEach(m => m.update(dt));
+            particles.forEach((p,i) => { p.position.add(p.vel.clone().multiplyScalar(dt)); p.vel.y -= 15 * dt; p.life -= dt; if(p.life <= 0) { scene.remove(p); particles.splice(i,1); } });
+
+            renderer.render(scene, camera);
+        }
+
+        genWorld(); animate(); updateUI();
+        window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
+    </script>
+</body>
+</html>
